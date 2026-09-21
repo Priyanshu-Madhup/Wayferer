@@ -1,0 +1,72 @@
+# Wayfarer — AI Travel Planner
+
+An agentic AI travel planner: a FastAPI backend running a Gemini-powered LLM agent
+(`gemini-3.5-flash-lite`, 1M-token context) with 15 tool-calling functions (places,
+routing, weather, flights, hotels, events, travel requirements, currency, budget,
+itinerary optimization/validation/modification), and a React + Vite frontend that
+shows the agent's research happening live and renders the resulting itinerary,
+budget and map.
+
+Single-user, no auth, no separate database server — everything is stored in a
+local SQLite file (`backend/travel_agent.db`).
+
+## Setup
+
+### 1. Backend
+
+```bash
+cd backend
+pip install -r requirements.txt
+```
+
+Copy `backend/backend.env.example` if you ever need a fresh template — a real
+`backend/backend.env` already exists; open it and fill in your keys:
+
+| Key | Where to get it |
+|---|---|
+| `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
+| `GEOAPIFY_API_KEY` | https://myprojects.geoapify.com |
+| `TOMTOM_API_KEY` | https://developer.tomtom.com |
+| `OPENWEATHER_API_KEY` | https://home.openweathermap.org/api_keys |
+| `DUFFEL_API_KEY` | https://app.duffel.com/join → Developers → Access tokens (instant, free unlimited test mode — covers both flights and hotels) |
+
+Currency conversion (Frankfurter) and events/visa lookups (DuckDuckGo search)
+need no key.
+
+Run the API (this reads `HOST`/`PORT` from `backend.env`, so it's always in sync with the frontend's `VITE_API_BASE`):
+
+```bash
+cd backend
+python main.py
+```
+
+### 2. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. It talks to the backend at whatever `VITE_API_BASE` in `frontend/.env` says (currently `http://localhost:8002`)
+(configurable via `frontend/.env` → `VITE_API_BASE`).
+
+## How it's put together
+
+- **Agent loop**: `backend/agent/orchestrator.py` runs a tool-calling loop against
+  the Gemini API (`google-genai` SDK). Each tool call is streamed to the frontend
+  over Server-Sent Events (`POST /api/chat/stream`) as `tool_start` / `tool_end`
+  events with a friendly label ("Finding the best flights for you…"), so the UI
+  can show live progress instead of a blank spinner.
+- **Tools**: `backend/tools/*.py`, one module per provider, matching the
+  provider grouping in the original design. They're plain async Python
+  functions today (not standalone MCP servers) — grouped and typed so they can
+  be wrapped in real MCP servers later with minimal change, without paying for
+  that complexity up front.
+- **Deterministic planning**: budget math, itinerary optimization, and
+  validation (`tools/budget.py`, `tools/optimizer.py`, `tools/validator.py`)
+  are plain code, not LLM calls — the agent calls them as tools and reasons
+  over their structured output.
+- **Storage**: `backend/database.py` is a thin SQLite layer — sessions
+  (trips), their chat history, and the latest itinerary/budget snapshot per
+  session.
